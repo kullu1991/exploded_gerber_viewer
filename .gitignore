@@ -1,0 +1,20 @@
+# Virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Extracted Gerber files (generated at runtime)
+.pcb_extracted/
+.extracted/
+
+# Test/debug artefacts
+test_extract/
+test_*.png
+startup_err.txt
+
+# OS
+Thumbs.db
+.DS_Store
