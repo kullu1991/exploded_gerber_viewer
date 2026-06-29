@@ -23,6 +23,7 @@ from .renderer import (
 )
 from .view_2d import Viewer2D
 from .view_3d import Viewer3D, _layer_z  # _layer_z used by ThreeDWorker
+from .drill_parser import parse_drill_files, parse_drr, DrillHole
 
 
 # ──────────────────────────────────────────────
@@ -84,7 +85,10 @@ class ThreeDWorker(QObject):
         gmin_x, gmax_x, gmin_y, gmax_y = get_global_bbox(self._rendered)
         total = len(self._rendered)
 
-        inner_counter = 0
+        # Separate counters: INNER_COPPER (G1,G2…) and INNER_PLANE (GG*) each
+        # get their own sequence so z_slots stay within the correct Z range.
+        inner_copper_counter = 0
+        inner_plane_counter  = 0
         result: Dict[str, tuple] = {}
 
         for i, rl in enumerate(self._rendered):
@@ -93,15 +97,17 @@ class ThreeDWorker(QObject):
             canvas = render_layer_to_canvas(
                 rl, gmin_x, gmax_x, gmin_y, gmax_y, self._dpi
             )
-            # Keep RGBA so transparent pixels stay invisible in 3D
             if canvas.mode != "RGBA":
                 canvas = canvas.convert("RGBA")
             arr = np.array(canvas)  # shape (H, W, 4)
 
             key = rl.info.filename
             if rl.info.layer_type == LayerType.INNER_COPPER:
-                idx = inner_counter
-                inner_counter += 1
+                idx = inner_copper_counter
+                inner_copper_counter += 1
+            elif rl.info.layer_type == LayerType.INNER_PLANE:
+                idx = inner_plane_counter
+                inner_plane_counter += 1
             else:
                 idx = 0
             z_slot = _layer_z(rl.info, idx)
@@ -116,22 +122,24 @@ class ThreeDWorker(QObject):
 # ──────────────────────────────────────────────
 
 class LayerRow(QWidget):
-    toggled = pyqtSignal(str, bool)
+    toggled       = pyqtSignal(str, bool)
+    color_changed = pyqtSignal(str, int, int, int)   # filename, r, g, b
 
     def __init__(self, info: LayerInfo, parent=None):
         super().__init__(parent)
         self._info = info
+        self._color_hex = LAYER_DISPLAY_COLOR.get(info.layer_type, "#888888")
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 2, 4, 2)
         layout.setSpacing(6)
 
-        swatch = QLabel()
-        swatch.setFixedSize(14, 14)
-        color = LAYER_DISPLAY_COLOR.get(info.layer_type, "#888")
-        swatch.setStyleSheet(
-            f"background:{color}; border:1px solid #555; border-radius:2px;"
-        )
+        # Clickable color swatch — opens QColorDialog
+        self._swatch = QPushButton()
+        self._swatch.setFixedSize(16, 16)
+        self._swatch.setToolTip("Click to change layer colour")
+        self._swatch.clicked.connect(self._pick_color)
+        self._apply_swatch()
 
         self._check = QCheckBox(info.layer_type.value)
         self._check.setChecked(True)
@@ -140,12 +148,33 @@ class LayerRow(QWidget):
         ext_lbl = QLabel(info.extension)
         ext_lbl.setStyleSheet("color:#666; font-size:10px;")
 
-        layout.addWidget(swatch)
+        layout.addWidget(self._swatch)
         layout.addWidget(self._check)
         layout.addStretch()
         layout.addWidget(ext_lbl)
 
         self._check.toggled.connect(lambda v: self.toggled.emit(info.filename, v))
+
+    def _apply_swatch(self):
+        self._swatch.setStyleSheet(
+            f"background:{self._color_hex}; border:1px solid #555;"
+            f" border-radius:2px; padding:0;"
+        )
+
+    def _pick_color(self):
+        from PyQt6.QtWidgets import QColorDialog
+        from PyQt6.QtGui import QColor
+        initial = QColor(self._color_hex)
+        color = QColorDialog.getColor(
+            initial, self,
+            f"Layer colour — {self._info.layer_type.value} ({self._info.filename})",
+        )
+        if color.isValid():
+            self._color_hex = color.name()
+            self._apply_swatch()
+            self.color_changed.emit(
+                self._info.filename, color.red(), color.green(), color.blue()
+            )
 
     def filename(self) -> str:
         return self._info.filename
@@ -159,15 +188,17 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Gerber PCB Viewer")
-        self.resize(1280, 800)
         self.setAcceptDrops(True)
 
         self._layers:     List[LayerInfo]     = []
         self._rendered:   List[RenderedLayer]  = []
         self._visible:    Dict[str, bool]      = {}
+        self._layer_colors: Dict[str, Tuple[int,int,int]] = {}  # filename → (r,g,b)
         self._dpi: int = 300
         self._layer_rows: List[LayerRow]       = []
         self._board_size_mm: Optional[Tuple[float, float]] = None
+        self._bbox_origin: Tuple[float, float] = (0.0, 0.0)
+        self._drill_holes: List[DrillHole] = []
 
         # Render thread state
         self._r_thread: Optional[QThread] = None
@@ -176,7 +207,7 @@ class MainWindow(QMainWindow):
         # 3D thread state
         self._3d_thread: Optional[QThread] = None
         self._3d_worker: Optional[ThreeDWorker] = None
-        self._3d_dirty: bool = False  # set when rendered changes, clear after 3D update
+        self._3d_dirty: bool = False
 
         self._build_ui()
         self._apply_dark_theme()
@@ -232,6 +263,14 @@ class MainWindow(QMainWindow):
         btn_open = QPushButton("Open RAR / ZIP…")
         btn_open.clicked.connect(self._open_dialog)
         layout.addWidget(btn_open)
+
+        self._btn_close = QPushButton("Close Project")
+        self._btn_close.clicked.connect(self._close_project)
+        self._btn_close.setEnabled(False)
+        self._btn_close.setStyleSheet(
+            "QPushButton:enabled { color:#ff7070; border-color:#884444; }"
+        )
+        layout.addWidget(self._btn_close)
 
         hint = QLabel("  or drop file onto this window")
         hint.setStyleSheet("color:#666; font-size:11px;")
@@ -356,9 +395,29 @@ class MainWindow(QMainWindow):
         self._layers = layers
         self._visible = {l.filename: True for l in layers}
         self._build_layer_panel()
+        self._btn_close.setEnabled(True)
+
+        # Find DRR report (gives per-file layer-pair info for blind/buried vias)
+        drr_paths = [
+            os.path.join(root, f)
+            for root, _, files in os.walk(extract_dir)
+            for f in files if f.upper().endswith(".DRR")
+        ]
+        layer_pairs = parse_drr(drr_paths[0]) if drr_paths else {}
+
+        # Parse all drill TX/TXT files — layer_pairs tags each hole's span
+        drill_paths = [
+            l.path for l in layers
+            if l.layer_type == LayerType.DRILL
+            and l.extension.upper() in (".TXT", ".TX1", ".TX2", ".TX3", ".TX4",
+                                         ".TX5", ".TX6", ".TX7", ".TX8")
+        ]
+        self._drill_holes = parse_drill_files(drill_paths, layer_pairs)
+
         self._dpi = self._dpi_spin.value()
         self._status.showMessage(
-            f"Found {len(layers)} layers — rendering at {self._dpi} DPI…"
+            f"Found {len(layers)} layers, {len(self._drill_holes)} drill holes"
+            f" — rendering at {self._dpi} DPI…"
         )
         self._start_2d_render(layers)
 
@@ -374,6 +433,7 @@ class MainWindow(QMainWindow):
         for info in self._layers:
             row = LayerRow(info)
             row.toggled.connect(self._on_layer_toggled)
+            row.color_changed.connect(self._on_layer_color_changed)
             self._layer_layout.addWidget(row)
             self._layer_rows.append(row)
 
@@ -408,7 +468,6 @@ class MainWindow(QMainWindow):
     def _on_2d_progress(self, done: int, total: int):
         self._progress.setRange(0, total)
         self._progress.setValue(done)
-        self._viewer_2d.show_progress(done, total)
         self._status.showMessage(f"Rendering layers… {done} / {total}")
 
     def _on_2d_finished(self):
@@ -420,7 +479,6 @@ class MainWindow(QMainWindow):
         self._refresh_2d()
         self._3d_dirty = True
         self._progress.hide()
-        self._viewer_2d.hide_progress()
 
         n = len(self._rendered)
         w, h = get_board_size_mm(self._rendered)
@@ -479,13 +537,22 @@ class MainWindow(QMainWindow):
         self._viewer_3d.hide_progress()
 
         bsz = self._board_size_mm or get_board_size_mm(self._rendered)
+        gmin_x, _, gmin_y, _ = get_global_bbox(self._rendered)
+        self._bbox_origin = (gmin_x, gmin_y)
+
         self._viewer_3d.update_layer_images(layer_images, bsz, dict(self._visible))
+
+        # Pass drill holes for via rendering
+        if self._drill_holes:
+            self._viewer_3d.set_vias(self._drill_holes, gmin_x, gmin_y)
+
         self._3d_dirty = False
 
         n = len(self._rendered)
         w, h = bsz
+        v = len(self._drill_holes)
         self._status.showMessage(
-            f"3D ready  |  {n} layers  |  Board: {w:.1f} × {h:.1f} mm"
+            f"3D ready  |  {n} layers  |  {v} vias  |  Board: {w:.1f} × {h:.1f} mm"
         )
 
     # ── Compositing helpers ────────────────────
@@ -493,7 +560,10 @@ class MainWindow(QMainWindow):
     def _refresh_2d(self):
         if not self._rendered:
             return
-        img = composite_layers(self._rendered, self._visible, self._dpi)
+        img = composite_layers(
+            self._rendered, self._visible, self._dpi,
+            color_overrides=self._layer_colors or None,
+        )
         bsz = get_board_size_mm(self._rendered)
         self._viewer_2d.update_image(img, bsz)
 
@@ -502,8 +572,12 @@ class MainWindow(QMainWindow):
     def _on_layer_toggled(self, filename: str, visible: bool):
         self._visible[filename] = visible
         self._refresh_2d()
-        # Real-time 3D actor toggle — no re-render needed
         self._viewer_3d.toggle_layer(filename, visible)
+
+    def _on_layer_color_changed(self, filename: str, r: int, g: int, b: int):
+        self._layer_colors[filename] = (r, g, b)
+        self._refresh_2d()
+        self._viewer_3d.update_layer_color(filename, r, g, b)
 
     def _show_all(self):
         self._visible = {k: True for k in self._visible}
@@ -552,12 +626,22 @@ class MainWindow(QMainWindow):
         self._r_worker = self._r_thread = None
         self._3d_worker = self._3d_thread = None
 
+    def _close_project(self):
+        self._cancel_all()
+        self._clear_state()
+        self.setWindowTitle("Gerber PCB Viewer")
+        self._status.showMessage("Drop a RAR / ZIP file to open a PCB project.")
+
     def _clear_state(self):
         self._layers.clear()
         self._rendered.clear()
         self._visible.clear()
+        self._layer_colors.clear()
+        self._drill_holes.clear()
         self._board_size_mm = None
+        self._bbox_origin = (0.0, 0.0)
         self._3d_dirty = False
+        self._btn_close.setEnabled(False)
         for row in self._layer_rows:
             self._layer_layout.removeWidget(row)
             row.deleteLater()
