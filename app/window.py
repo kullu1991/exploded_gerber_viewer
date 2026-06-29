@@ -405,12 +405,10 @@ class MainWindow(QMainWindow):
         ]
         layer_pairs = parse_drr(drr_paths[0]) if drr_paths else {}
 
-        # Parse all drill TX/TXT files — layer_pairs tags each hole's span
+        # Parse all Excellon drill files — any file classified as DRILL
         drill_paths = [
             l.path for l in layers
             if l.layer_type == LayerType.DRILL
-            and l.extension.upper() in (".TXT", ".TX1", ".TX2", ".TX3", ".TX4",
-                                         ".TX5", ".TX6", ".TX7", ".TX8")
         ]
         self._drill_holes = parse_drill_files(drill_paths, layer_pairs)
 
