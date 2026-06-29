@@ -55,6 +55,17 @@ def parse_drr(drr_path: str) -> Dict[str, Tuple[str, str]]:
 
 # ── Excellon parser ─────────────────────────────────────────────────────────
 
+def _parse_coord(raw: str, divisor: int, scale: float) -> float:
+    """Convert a raw Excellon coordinate string to mm.
+
+    Handles both integer-scaled format (e.g. '184009' with divisor=10000)
+    and explicit-decimal format (e.g. '-84.4009' used by EasyEDA Pro).
+    """
+    if '.' in raw:
+        return float(raw) * scale
+    return int(raw) / divisor * scale
+
+
 def _parse_file(filepath: str) -> List[DrillHole]:
     holes: List[DrillHole] = []
     tools: dict = {}
@@ -99,8 +110,16 @@ def _parse_file(filepath: str) -> List[DrillHole]:
         if in_header:
             if "METRIC" in line:
                 unit_scale = 1.0
+                # Parse inline format spec: METRIC,LZ,0000.00000
+                # Number of digits after decimal → coord_divisor
+                mf = re.search(r"\d+\.(\d+)", line)
+                if mf:
+                    coord_divisor = 10 ** len(mf.group(1))
             elif "INCH" in line:
                 unit_scale = 25.4
+                mf = re.search(r"\d+\.(\d+)", line)
+                if mf:
+                    coord_divisor = 10 ** len(mf.group(1))
             m = re.match(r"T(\d+)(?:F[\d.]+S[\d.]+)?C([\d.]+)", line)
             if m:
                 tools[int(m.group(1))] = float(m.group(2)) * unit_scale
@@ -114,23 +133,23 @@ def _parse_file(filepath: str) -> List[DrillHole]:
             continue
 
         # Slot: G00 → M15 → G01 → M16
-        g00 = re.match(r"G00X(-?\d+)Y(-?\d+)", line)
+        g00 = re.match(r"G00X(-?[\d.]+)Y(-?[\d.]+)", line)
         if g00 and current_tool is not None:
-            sx = int(g00.group(1)) / coord_divisor * unit_scale
-            sy = int(g00.group(2)) / coord_divisor * unit_scale
+            sx = _parse_coord(g00.group(1), coord_divisor, unit_scale)
+            sy = _parse_coord(g00.group(2), coord_divisor, unit_scale)
             ex, ey = sx, sy
             j = i
             while j < len(lines):
                 l2 = lines[j].strip()
                 j += 1
-                m1 = re.match(r"G01X(-?\d+)(?:Y(-?\d+))?", l2)
-                m2 = re.match(r"G01Y(-?\d+)", l2)
+                m1 = re.match(r"G01X(-?[\d.]+)(?:Y(-?[\d.]+))?", l2)
+                m2 = re.match(r"G01Y(-?[\d.]+)", l2)
                 if m1:
-                    ex = int(m1.group(1)) / coord_divisor * unit_scale
-                    ey = int(m1.group(2)) / coord_divisor * unit_scale if m1.group(2) else sy
+                    ex = _parse_coord(m1.group(1), coord_divisor, unit_scale)
+                    ey = _parse_coord(m1.group(2), coord_divisor, unit_scale) if m1.group(2) else sy
                     break
                 elif m2:
-                    ey = int(m2.group(1)) / coord_divisor * unit_scale
+                    ey = _parse_coord(m2.group(1), coord_divisor, unit_scale)
                     ex = sx
                     break
                 elif l2 == "M16":
@@ -139,13 +158,13 @@ def _parse_file(filepath: str) -> List[DrillHole]:
                                    tools.get(current_tool, 0.3), plated))
             continue
 
-        x_m = re.search(r"X(-?\d+)", line)
-        y_m = re.search(r"Y(-?\d+)", line)
+        x_m = re.search(r"X(-?[\d.]+)", line)
+        y_m = re.search(r"Y(-?[\d.]+)", line)
 
         if x_m:
-            last_x = int(x_m.group(1)) / coord_divisor * unit_scale
+            last_x = _parse_coord(x_m.group(1), coord_divisor, unit_scale)
         if y_m:
-            last_y = int(y_m.group(1)) / coord_divisor * unit_scale
+            last_y = _parse_coord(y_m.group(1), coord_divisor, unit_scale)
 
         if (x_m or y_m) and last_x is not None and last_y is not None \
                 and current_tool is not None:
