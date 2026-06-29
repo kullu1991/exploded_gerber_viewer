@@ -81,11 +81,26 @@ def render_layer(info: LayerInfo, dpi: int = 300) -> Optional[RenderedLayer]:
         return None
 
 
+def recolor_image(
+    image: Image.Image,
+    r: int, g: int, b: int,
+) -> Image.Image:
+    """Return a copy of *image* with all non-transparent pixels set to (r, g, b)."""
+    import numpy as np
+    arr = np.array(image.convert("RGBA"), dtype=np.uint8).copy()
+    mask = arr[:, :, 3] > 0
+    arr[mask, 0] = r
+    arr[mask, 1] = g
+    arr[mask, 2] = b
+    return Image.fromarray(arr, "RGBA")
+
+
 def composite_layers(
     rendered: List[RenderedLayer],
     visible: Dict[str, bool],
     dpi: int = 300,
     background: Tuple[int, int, int] = (30, 30, 30),
+    color_overrides: Optional[Dict[str, Tuple[int, int, int]]] = None,
 ) -> Image.Image:
     """Composite all visible rendered layers into one RGBA image."""
     active = [
@@ -96,7 +111,6 @@ def composite_layers(
     if not active:
         return Image.new("RGBA", (800, 600), (*background, 255))
 
-    # Global bounding box
     gmin_x = min(r.min_x_mm for r in active)
     gmax_x = max(r.max_x_mm for r in active)
     gmin_y = min(r.min_y_mm for r in active)
@@ -108,7 +122,6 @@ def composite_layers(
 
     canvas = Image.new("RGBA", (canvas_w, canvas_h), (*background, 255))
 
-    # Sort by render order
     active_sorted = sorted(
         active,
         key=lambda r: LAYER_ORDER.get(r.info.layer_type, 99),
@@ -117,10 +130,12 @@ def composite_layers(
     for rl in active_sorted:
         off_x = int((rl.min_x_mm - gmin_x) * px_per_mm)
         off_y = int((gmax_y - rl.max_y_mm) * px_per_mm)
-        # Ensure image fits
         img = rl.image
         if img.mode != "RGBA":
             img = img.convert("RGBA")
+        # Apply per-layer color override if set
+        if color_overrides and rl.info.filename in color_overrides:
+            img = recolor_image(img, *color_overrides[rl.info.filename])
         canvas.paste(img, (off_x, off_y), img)
 
     return canvas

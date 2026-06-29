@@ -6,7 +6,8 @@ from typing import Dict, Tuple
 class LayerType(Enum):
     TOP_COPPER    = "Top Copper"
     BOT_COPPER    = "Bottom Copper"
-    INNER_COPPER  = "Inner Layer"
+    INNER_COPPER  = "Inner Layer"        # G1-G30  — signal mid-layers
+    INNER_PLANE   = "Inner Plane"        # GG1-GG30 — power/GND plane layers
     TOP_SILK      = "Top Silkscreen"
     BOT_SILK      = "Bottom Silkscreen"
     TOP_MASK      = "Top Solder Mask"
@@ -35,6 +36,7 @@ LAYER_SOLID_COLOR: Dict[LayerType, Tuple[int, int, int, int]] = {
     LayerType.TOP_COPPER:    (255, 180,   0, 255),
     LayerType.BOT_COPPER:    (  0, 120, 220, 255),
     LayerType.INNER_COPPER:  (220, 100,   0, 200),
+    LayerType.INNER_PLANE:   (180, 130,   0, 200),   # amber — plane layers
     LayerType.TOP_SILK:      (255, 255, 255, 255),
     LayerType.BOT_SILK:      (200, 210, 255, 255),
     LayerType.TOP_MASK:      (  0, 200,  60, 130),
@@ -52,6 +54,7 @@ LAYER_DISPLAY_COLOR: Dict[LayerType, str] = {
     LayerType.TOP_COPPER:    "#FFB400",
     LayerType.BOT_COPPER:    "#0078DC",
     LayerType.INNER_COPPER:  "#DC6400",
+    LayerType.INNER_PLANE:   "#B48200",
     LayerType.TOP_SILK:      "#FFFFFF",
     LayerType.BOT_SILK:      "#C8D2FF",
     LayerType.TOP_MASK:      "#00C83C",
@@ -72,6 +75,7 @@ LAYER_ORDER: Dict[LayerType, int] = {
     LayerType.BOT_PASTE:     3,
     LayerType.BOT_SILK:      4,
     LayerType.INNER_COPPER:  5,
+    LayerType.INNER_PLANE:   5,   # same order as inner copper
     LayerType.MECHANICAL:    6,
     LayerType.TOP_PASTE:     7,
     LayerType.TOP_MASK:      8,
@@ -85,17 +89,17 @@ LAYER_ORDER: Dict[LayerType, int] = {
 EXTENSION_MAP: Dict[str, LayerType] = {
     ".GTL":  LayerType.TOP_COPPER,
     ".GBL":  LayerType.BOT_COPPER,
+    # G1-G4 : signal mid-layers (inner copper planes)
     ".G1":   LayerType.INNER_COPPER,
     ".G2":   LayerType.INNER_COPPER,
     ".G3":   LayerType.INNER_COPPER,
     ".G4":   LayerType.INNER_COPPER,
-    # .GD* and .GG* are Altium documentation/keepout layers with unpredictable
-    # bounding boxes — including them distorts the global canvas and misaligns layers.
-    ".GG1":  LayerType.INNER_COPPER,
-    ".GG2":  LayerType.INNER_COPPER,
-    ".GG3":  LayerType.INNER_COPPER,
-    ".GG4":  LayerType.INNER_COPPER,
-    ".GG5":  LayerType.INNER_COPPER,
+    # GG1-GG5 : power / GND plane layers (positive Gerber fills)
+    ".GG1":  LayerType.INNER_PLANE,
+    ".GG2":  LayerType.INNER_PLANE,
+    ".GG3":  LayerType.INNER_PLANE,
+    ".GG4":  LayerType.INNER_PLANE,
+    ".GG5":  LayerType.INNER_PLANE,
     ".GPT":  LayerType.TOP_COPPER,
     ".GPB":  LayerType.BOT_COPPER,
     ".GTO":  LayerType.TOP_SILK,
@@ -120,6 +124,7 @@ EXTENSION_MAP: Dict[str, LayerType] = {
     ".DR4":  LayerType.DRILL,
     ".XLN":  LayerType.DRILL,
     ".NC":   LayerType.DRILL,
+    ".TXT":  LayerType.DRILL,
 }
 
 # Extensions that are definitely not renderable layers
@@ -130,39 +135,35 @@ SKIP_EXTENSIONS = {
     ".GD1", ".GD2", ".GD3", ".GD4", ".GD5",
 }
 
-# Top-side layer types (for 3D texture compositing)
+# Top-side layer types (for 3D board-mode compositing)
 TOP_LAYER_TYPES = {
     LayerType.TOP_COPPER, LayerType.TOP_SILK,
-    LayerType.TOP_MASK, LayerType.TOP_PASTE,
+    LayerType.TOP_MASK,   LayerType.TOP_PASTE,
     LayerType.BOARD_OUTLINE,
 }
 
 # Bottom-side layer types
 BOTTOM_LAYER_TYPES = {
     LayerType.BOT_COPPER, LayerType.BOT_SILK,
-    LayerType.BOT_MASK, LayerType.BOT_PASTE,
+    LayerType.BOT_MASK,   LayerType.BOT_PASTE,
 }
 
 
 def classify_file(path: str) -> LayerType:
-    """Classify a file by its extension."""
     import os
     ext = os.path.splitext(path)[1].upper()
     return EXTENSION_MAP.get(ext, LayerType.UNKNOWN)
 
 
 def is_renderable(path: str) -> bool:
-    """Return True if the file is likely a Gerber/Excellon layer."""
     import os
     ext = os.path.splitext(path)[1].upper()
     if ext in SKIP_EXTENSIONS:
         return False
-    # Skip plain text reports
     if ext == ".TXT":
         try:
             with open(path, "r", errors="ignore") as f:
                 first = f.read(10).strip()
-            # Excellon drill files start with % or M48
             return first.startswith("%") or first.upper().startswith("M48")
         except Exception:
             return False

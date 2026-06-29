@@ -1,7 +1,6 @@
 from PyQt6.QtWidgets import (
     QGraphicsView, QGraphicsScene, QGraphicsPixmapItem,
     QWidget, QVBoxLayout, QHBoxLayout, QToolBar, QPushButton, QLabel,
-    QProgressBar,
 )
 from PyQt6.QtGui import QPixmap, QImage, QWheelEvent, QMouseEvent, QTransform
 from PyQt6.QtCore import Qt, QPoint
@@ -91,33 +90,12 @@ class Viewer2D(QWidget):
 
         self._view = PCBGraphicsView()
 
-        # In-view progress bar (shown while layers render)
-        self._progress = QProgressBar()
-        self._progress.setRange(0, 100)
-        self._progress.setTextVisible(True)
-        self._progress.setFormat("Rendering layers… %v / %m")
-        self._progress.setFixedHeight(18)
-        self._progress.setStyleSheet(
-            "QProgressBar{background:#1a1a2a;border:none;color:#aaa;font-size:11px;}"
-            "QProgressBar::chunk{background:#3a7dc9;}"
-        )
-        self._progress.hide()
-
         layout.addWidget(toolbar)
         layout.addWidget(self._view)
-        layout.addWidget(self._progress)
 
         btn_fit.clicked.connect(self._fit)
         btn_zoom_in.clicked.connect(self._zoom_in)
         btn_zoom_out.clicked.connect(self._zoom_out)
-
-    def show_progress(self, done: int, total: int):
-        self._progress.setRange(0, total)
-        self._progress.setValue(done)
-        self._progress.show()
-
-    def hide_progress(self):
-        self._progress.hide()
 
     def update_image(self, image: Image.Image, board_size_mm=None):
         self._image = image
