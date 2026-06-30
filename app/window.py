@@ -20,6 +20,7 @@ from .extractor import extract_archive, discover_layers
 from .renderer import (
     RenderedLayer, render_layer, composite_layers,
     get_board_size_mm, get_global_bbox, render_layer_to_canvas,
+    draw_drill_holes,
 )
 from .view_2d import Viewer2D
 from .view_3d import Viewer3D, _layer_z  # _layer_z used by ThreeDWorker
@@ -562,6 +563,13 @@ class MainWindow(QMainWindow):
             self._rendered, self._visible, self._dpi,
             color_overrides=self._layer_colors or None,
         )
+        if self._drill_holes:
+            gmin_x, gmax_x, gmin_y, gmax_y = get_global_bbox(self._rendered)
+            img = draw_drill_holes(
+                img, self._drill_holes,
+                gmin_x, gmax_x, gmin_y, gmax_y,
+                self._dpi,
+            )
         bsz = get_board_size_mm(self._rendered)
         self._viewer_2d.update_image(img, bsz)
 

@@ -141,6 +141,30 @@ def composite_layers(
     return canvas
 
 
+def draw_drill_holes(
+    image: Image.Image,
+    holes,
+    gmin_x: float, gmax_x: float,
+    gmin_y: float, gmax_y: float,
+    dpi: int,
+) -> Image.Image:
+    """Overlay drill holes as filled circles on a composite image."""
+    from PIL import ImageDraw
+    px_per_mm = dpi / 25.4
+    img = image.copy()
+    draw = ImageDraw.Draw(img)
+
+    for h in holes:
+        cx = int((h.x_mm - gmin_x) * px_per_mm)
+        cy = int((gmax_y - h.y_mm) * px_per_mm)
+        r = max(1, int(h.diameter_mm / 2 * px_per_mm))
+        fill    = (50, 50, 50, 255) if h.plated else (30, 30, 30, 255)
+        outline = (200, 180, 80, 255) if h.plated else (160, 160, 160, 255)
+        draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=fill, outline=outline, width=max(1, r // 4))
+
+    return img
+
+
 def composite_side(
     rendered: List[RenderedLayer],
     side_types: set,
