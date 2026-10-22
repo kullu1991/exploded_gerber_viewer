@@ -1,7 +1,7 @@
-PyQt6
-pygerber
-Pillow
-numpy
-pyvistaqt
-pyvista
-qtpy
+PyQt6>=6.5
+pygerber>=2.4,<3
+Pillow>=9.1
+numpy>=1.24
+pyvistaqt>=0.11
+pyvista>=0.42
+qtpy>=2.3
