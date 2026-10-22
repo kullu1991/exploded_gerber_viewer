@@ -18,3 +18,7 @@ startup_err.txt
 # OS
 Thumbs.db
 .DS_Store
+
+# PyInstaller output
+build/
+dist/

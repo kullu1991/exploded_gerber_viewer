@@ -4,6 +4,18 @@ A local PCB Gerber file viewer built with Python. Load any RAR or ZIP archive of
 
 ---
 
+## Download
+
+Get **`ExplodedGerberViewer-v1.0.0-windows-x64.zip`** from the
+[latest release](https://github.com/kullu1991/exploded_gerber_viewer/releases/latest),
+unzip it anywhere and run **`GerberViewer.exe`**. No Python installation is needed
+(64-bit Windows 10 / 11). You can also drop a Gerber archive onto `GerberViewer.exe`.
+
+> Windows SmartScreen may say *"Windows protected your PC"* because the program is new and not
+> code-signed. Click **More info → Run anyway**.
+
+---
+
 ## Screenshots
 
 **2D Layer View**
@@ -33,7 +45,7 @@ A local PCB Gerber file viewer built with Python. Load any RAR or ZIP archive of
 
 - Windows 10 / 11
 - Python 3.10+
-- [7-Zip](https://www.7-zip.org/) installed at `C:\Program Files\7-Zip\7z.exe` (used for RAR extraction)
+- [7-Zip](https://www.7-zip.org/) for **RAR / 7z** archives only (found automatically wherever it is installed). ZIP archives open without it.
 - A GPU that supports OpenGL (for the 3D view)
 
 ---
@@ -124,10 +136,15 @@ exploded_gerber_viewer/
 | `.GTP` / `.GBP` | Top / Bottom paste |
 | `.GKO` | Board outline |
 | `.GM`, `.GM15` | Mechanical layers |
-| `.DRL`, `.TXT` | Drill files (listed, not rendered) |
+| `.DRL`, `.TXT`, `.TX1`… | Drill files (holes in 2D, vias in 3D) |
 
 ---
 
 ## License
 
-MIT
+Copyright © 2026 Kulbhushan Srivastava.
+
+Exploded Gerber Viewer is free software under the **GNU General Public License v3.0**; see
+[LICENSE](LICENSE). It is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY.
+The Windows build bundles PyQt6 (GPL v3), Qt 6 (LGPL v3), VTK / PyVista (BSD / MIT), pygerber (MIT),
+Pillow (MIT-CMU) and NumPy (BSD).

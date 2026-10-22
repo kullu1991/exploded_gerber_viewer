@@ -16,7 +16,7 @@ from PIL import Image
 from .layer_config import (
     LayerInfo, LayerType, LAYER_DISPLAY_COLOR, LAYER_ORDER,
 )
-from .extractor import extract_archive, discover_layers
+from .extractor import extract_archive, discover_layers, cleanup_extraction
 from .renderer import (
     RenderedLayer, render_layer, composite_layers,
     get_board_size_mm, get_global_bbox, render_layer_to_canvas,
@@ -200,6 +200,7 @@ class MainWindow(QMainWindow):
         self._board_size_mm: Optional[Tuple[float, float]] = None
         self._bbox_origin: Tuple[float, float] = (0.0, 0.0)
         self._drill_holes: List[DrillHole] = []
+        self._extract_dir: Optional[str] = None   # temp folder of the open archive
 
         # Render thread state
         self._r_thread: Optional[QThread] = None
@@ -380,12 +381,16 @@ class MainWindow(QMainWindow):
         self._clear_state()
         self.setWindowTitle(f"Gerber PCB Viewer — {os.path.basename(path)}")
         self._status.showMessage("Extracting archive…")
+        cleanup_extraction(self._extract_dir)
+        self._extract_dir = None
 
         try:
             extract_dir = extract_archive(path)
         except Exception as e:
             QMessageBox.critical(self, "Extraction Failed", str(e))
+            self._status.showMessage("Could not open the archive.")
             return
+        self._extract_dir = extract_dir
 
         layers = discover_layers(extract_dir)
         if not layers:
@@ -457,7 +462,15 @@ class MainWindow(QMainWindow):
 
         thread.start()
 
+    def _stale(self, current_worker) -> bool:
+        """True when a signal comes from a worker that was cancelled or replaced,
+        e.g. a new file was opened while the previous one was still rendering."""
+        sender = self.sender()
+        return sender is not None and sender is not current_worker
+
     def _on_layer_done(self, result):
+        if self._stale(self._r_worker):
+            return
         if result is not None:
             self._rendered.append(result)
         n = len(self._rendered)
@@ -465,11 +478,15 @@ class MainWindow(QMainWindow):
             self._refresh_2d()
 
     def _on_2d_progress(self, done: int, total: int):
+        if self._stale(self._r_worker):
+            return
         self._progress.setRange(0, total)
         self._progress.setValue(done)
         self._status.showMessage(f"Rendering layers… {done} / {total}")
 
     def _on_2d_finished(self):
+        if self._stale(self._r_worker):
+            return
         if self._r_thread:
             self._r_thread.quit()
             self._r_thread.wait()
@@ -521,12 +538,16 @@ class MainWindow(QMainWindow):
         thread.start()
 
     def _on_3d_progress(self, done: int, total: int):
+        if self._stale(self._3d_worker):
+            return
         self._progress.setRange(0, total)
         self._progress.setValue(done)
         self._viewer_3d.show_progress(done, total)
         self._status.showMessage(f"Building 3D view… {done} / {total} layers")
 
     def _on_3d_ready(self, layer_images: dict):
+        if self._stale(self._3d_worker):
+            return
         if self._3d_thread:
             self._3d_thread.quit()
             self._3d_thread.wait()
@@ -635,6 +656,8 @@ class MainWindow(QMainWindow):
     def _close_project(self):
         self._cancel_all()
         self._clear_state()
+        cleanup_extraction(self._extract_dir)
+        self._extract_dir = None
         self.setWindowTitle("Gerber PCB Viewer")
         self._status.showMessage("Drop a RAR / ZIP file to open a PCB project.")
 
@@ -661,4 +684,6 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._cancel_all()
+        cleanup_extraction(self._extract_dir)
+        self._extract_dir = None
         super().closeEvent(event)
